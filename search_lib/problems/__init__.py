@@ -3,6 +3,7 @@ from search_lib.problems.n_queens import (
     NQueensProblem,
     NQueensState,
     PlaceQueenAction,
+    format_board,
 )
 from search_lib.problems.robot_grid import (
     Direction,
@@ -24,4 +25,5 @@ __all__ = [
     "RobotActionKind",
     "RobotGridProblem",
     "RobotState",
+    "format_board",
 ]

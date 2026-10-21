@@ -24,6 +24,7 @@ from search_lib.problems import (
     NQueensProblem,
     RobotGridProblem,
     RobotState,
+    format_board,
 )
 
 
@@ -95,8 +96,7 @@ def run_robot(args: argparse.Namespace) -> SearchResult:
 
 
 def print_queens_board(positions: tuple[int, ...]) -> None:
-    for column in positions:
-        print(" ".join("Q" if current == column else "." for current in range(len(positions))))
+    print(format_board(positions))
 
 
 def run_queens(args: argparse.Namespace) -> SearchResult:
