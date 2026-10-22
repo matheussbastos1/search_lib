@@ -103,6 +103,170 @@ class RobotGridTests(unittest.TestCase):
         self.assertIsNotNone(result.solution_node)
         self.assertEqual(result.solution_node.depth, 2)
 
+    def test_clockwise_only_reaches_goal_with_extra_turns(self):
+        # Apenas giro horário (R) e avanço (F)
+        problem_cw = self.make_problem(
+            allowed_actions=("HORARIO", "FRENTE"),
+            goal_position=(0, 1),  # Precisa ir para o SUL (vira à direita e desce)
+        )
+        result_cw = GraphSearch(problem_cw).search(problem_cw.initial_state)
+        self.assertIsNotNone(result_cw.solution_node)
+        # Início (0,0) EAST. Vira R -> SOUTH, avança F -> (0, 1). Total: 2 passos (R, F)
+        self.assertEqual(result_cw.solution_node.depth, 2)
+
+        # Se precisar virar para o NORTE partindo de EAST, sem anti-horário (L), precisa virar R 3 vezes
+        problem_north = self.make_problem(
+            initial_state=RobotState(0, 1, Direction.EAST),
+            allowed_actions=("HORARIO", "FRENTE"),
+            goal_position=(0, 0),
+        )
+        result_north = GraphSearch(problem_north).search(problem_north.initial_state)
+        self.assertIsNotNone(result_north.solution_node)
+        # R, R, R, F = 4 passos (pois não tem L)
+        self.assertEqual(result_north.solution_node.depth, 4)
+
+    def test_actions_returns_only_applicable_moves(self):
+        # No canto (0,0) virado para NORTH, FORWARD bateria na parede superior
+        problem = self.make_problem(map_size=(3, 3))
+        facing_wall = RobotState(0, 0, Direction.NORTH)
+        valid = problem.actions(facing_wall)
+        kinds = [a.kind for a in valid]
+        self.assertNotIn(RobotActionKind.FORWARD, kinds)
+        self.assertIn(RobotActionKind.TURN_LEFT, kinds)
+        self.assertIn(RobotActionKind.TURN_RIGHT, kinds)
+
+    def test_render_ascii_output(self):
+        problem = RobotGridProblem(
+            map_size=(3, 3),
+            initial_state=RobotState(0, 0, Direction.EAST),
+            goal_position=(2, 2),
+            obstacles={(1, 1)},
+        )
+        rendered = problem.render(current_state=problem.initial_state)
+        lines = rendered.splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertIn(">", lines[0])  # Robô virado para leste
+        self.assertIn("#", lines[1])  # Obstáculo em (1, 1)
+        self.assertIn("G", lines[2])  # Objetivo em (2, 2)
+
+    def test_random_walk_produces_valid_states(self):
+        problem = self.make_problem(map_size=(5, 5), obstacles={(2, 2)})
+        start = RobotState(0, 0, Direction.EAST)
+        walked = problem.random_walk(start, n_steps=10, avoid_cycles=True, seed=42)
+        self.assertIsInstance(walked, RobotState)
+        self.assertTrue(0 <= walked.x < 5 and 0 <= walked.y < 5)
+        self.assertNotEqual(walked.position, (2, 2))
+
+    def test_heuristic_is_admissible(self):
+        problem = self.make_problem(
+            map_size=(4, 4),
+            initial_state=RobotState(0, 0, Direction.EAST),
+            goal_position=(3, 3),
+        )
+        h_val = problem.heuristic(problem.initial_state)
+        # Manhattan: |0-3| + |0-3| = 6
+        self.assertEqual(h_val, 6.0)
+        # O custo real ótimo é pelo menos 6 + giros necessários
+        result = GraphSearch(problem).search(problem.initial_state)
+        self.assertIsNotNone(result.solution_node)
+        self.assertLessEqual(h_val, result.solution_node.cost)
+
+    def test_validation_errors(self):
+        with self.assertRaises(ValueError):
+            # Dimensão inválida
+            RobotGridProblem(map_size=(0, 5), goal_position=(0, 0))
+        with self.assertRaises(ValueError):
+            # Objetivo fora do mapa
+            RobotGridProblem(map_size=(3, 3), goal_position=(5, 5))
+        with self.assertRaises(ValueError):
+            # Objetivo sobre obstáculo
+            RobotGridProblem(map_size=(3, 3), goal_position=(1, 1), obstacles={(1, 1)})
+        with self.assertRaises(ValueError):
+            # Início sobre obstáculo
+            RobotGridProblem(
+                map_size=(3, 3),
+                initial_state=RobotState(1, 1, Direction.EAST),
+                goal_position=(2, 2),
+                obstacles={(1, 1)},
+            )
+        with self.assertRaises(ValueError):
+            # Início em direção bloqueada
+            RobotGridProblem(
+                map_size=(3, 3),
+                initial_state=RobotState(0, 0, Direction.NORTH),
+                goal_position=(2, 2),
+                blocked_directions=["NORTE"],
+            )
+        with self.assertRaises(ValueError):
+            # Objetivo em direção bloqueada
+            RobotGridProblem(
+                map_size=(3, 3),
+                initial_state=RobotState(0, 0, Direction.EAST),
+                goal_position=(2, 2),
+                goal_direction=Direction.WEST,
+                blocked_directions=["WEST"],
+            )
+
+    def test_blocked_actions_parameter(self):
+        # Bloqueia giro anti-horário via blocked_actions
+        problem = self.make_problem(
+            blocked_actions=["ANTI_HORARIO"],
+            goal_position=(0, 1),
+        )
+        self.assertEqual(len(problem.allowed_actions), 2)
+        kinds = [a.kind for a in problem._actions]
+        self.assertNotIn(RobotActionKind.TURN_LEFT, kinds)
+        self.assertIn(RobotActionKind.TURN_RIGHT, kinds)
+        self.assertIn(RobotActionKind.FORWARD, kinds)
+
+        result = GraphSearch(problem).search(problem.initial_state)
+        self.assertIsNotNone(result.solution_node)
+
+    def test_backward_action(self):
+        # Robô em (1, 1) olhando para EAST. Ao dar ré, vai para (0, 1) mantendo direção EAST
+        start = RobotState(1, 1, Direction.EAST)
+        problem = self.make_problem(
+            map_size=(3, 3),
+            initial_state=start,
+            goal_position=(0, 1),
+            allowed_actions=["FRENTE", "RE", "HORARIO", "ANTI_HORARIO"],
+        )
+        result = GraphSearch(problem).search(start)
+        self.assertIsNotNone(result.solution_node)
+        # O caminho ótimo para (0, 1) partindo de (1, 1) olhando EAST com ré é apenas 1 ação: ['B']!
+        path = [str(a) for a in result.solution_node.get_path()]
+        self.assertEqual(path, ["B"])
+        self.assertEqual(result.solution_node.cost, 1.0)
+
+    def test_blocked_directions(self):
+        # Proíbe apontar para o SUL. Robô em (0, 0) olhando EAST precisa chegar em (0, 1)
+        # Sem poder apontar para o Sul, ele não pode dar giro horário simples (EAST -> SOUTH).
+        problem = self.make_problem(
+            map_size=(3, 3),
+            initial_state=RobotState(0, 0, Direction.EAST),
+            goal_position=(0, 1),
+            blocked_directions=["SUL"],
+            allowed_actions=["FRENTE", "RE", "HORARIO", "ANTI_HORARIO"],
+        )
+        result = GraphSearch(problem).search(problem.initial_state)
+        self.assertIsNotNone(result.solution_node)
+        # Verifica se em nenhum estado do caminho o robô ficou apontado para o SUL
+        curr = problem.initial_state
+        for act in result.solution_node.get_path():
+            curr = act.apply(curr)[0]
+            self.assertNotEqual(curr.direction, Direction.SOUTH)
+
+    def test_blocked_all_rotations_fails_when_unreachable(self):
+        # Robô não pode rotacionar (somente avançar no eixo X)
+        problem = self.make_problem(
+            map_size=(3, 3),
+            initial_state=RobotState(0, 0, Direction.EAST),
+            goal_position=(1, 2),  # em outra linha y
+            blocked_actions=["HORARIO", "ANTI_HORARIO"],
+        )
+        result = GraphSearch(problem).search(problem.initial_state)
+        self.assertIsNone(result.solution_node)
+
 
 class NQueensTests(unittest.TestCase):
     @staticmethod

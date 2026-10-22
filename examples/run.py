@@ -16,6 +16,9 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 from search_lib import BFS, DFS, DLS, GraphSearch
 from search_lib.core import Problem, SearchResult
 from search_lib.problems import (
@@ -76,21 +79,36 @@ def run_hanoi(args: argparse.Namespace) -> SearchResult:
 
 def run_robot(args: argparse.Namespace) -> SearchResult:
     size = args.grid_size
+    initial_state = RobotState(0, 0, Direction.EAST)
     problem = RobotGridProblem(
         map_size=(size, size),
-        initial_state=RobotState(0, 0, Direction.EAST),
+        initial_state=initial_state,
         goal_position=(size - 1, size - 1),
     )
     strategy = build_strategy(problem, args.algorithm or "graph-bfs", args.depth_limit)
-    result = strategy.search(problem.initial_state)
+    result = strategy.search(initial_state)
 
     print(f"\n=== Robô em grid ({size}x{size}) ===")
     if result.solution_node is None:
         print("Caminho não encontrado.")
     else:
-        print("Ações:", " ".join(map(str, result.solution_node.get_path())))
+        path_actions = result.solution_node.get_path()
+        print("Ações:", " ".join(map(str, path_actions)))
         print(f"Custo: {result.solution_node.cost}")
         print(f"Profundidade: {result.solution_node.depth}")
+
+        # Renderizar rota no grid
+        current = initial_state
+        path_states = [current]
+        for act in path_actions:
+            nxt = act.apply(current)
+            if nxt:
+                current = nxt[0]
+                path_states.append(current)
+
+        print("\nTrajetória no Grid:")
+        print(problem.render(path_states=path_states[:-1], current_state=path_states[-1]))
+    print("\nMétricas:")
     print_metrics(result)
     return result
 
